@@ -81,3 +81,18 @@ def test_erreur_inattendue_non_masquee():
 
     with pytest.raises(KeyError):
         call_with_fallback(["a", "b"], fn, sleep=lambda s: None)
+
+
+def test_coupure_reseau_du_sdk_gemini_est_relancee():
+    """Le SDK embarque sa propre copie d'httpx (« httpx2 ») : sa ReadError doit être rattrapée comme coupure réseau."""
+    import httpx2
+    state = {"n": 0}
+
+    def fn(model):
+        state["n"] += 1
+        if state["n"] == 1:
+            raise httpx2.ReadError("[WinError 10054] connexion fermée par l'hôte distant")
+        return "ok"
+
+    model, res, errors = call_with_fallback(["a"], fn, sleep=lambda s: None)
+    assert res == "ok" and errors[0]["code"] == "timeout"

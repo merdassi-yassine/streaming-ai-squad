@@ -17,6 +17,15 @@ RETRYABLE = {429, 500, 502, 503, 504, "timeout"}
 FATAL = {401, 403}  # problème de clé : inutile d'essayer un autre modèle
 
 
+def _is_network_error(e: BaseException) -> bool:
+    """Coupure réseau / délai dépassé. Le SDK Gemini embarque sa propre copie d'httpx (« httpx2 ») :
+    on reconnaît donc l'erreur par le nom de ses classes, pas par isinstance (vu le 24/11/2026 :
+    httpx2.ReadError [WinError 10054] non rattrapée → run interrompu)."""
+    if isinstance(e, (httpx.TransportError, ConnectionError, TimeoutError)):
+        return True
+    return any(c.__name__ in {"TransportError", "NetworkError", "TimeoutException"} for c in type(e).__mro__)
+
+
 class ModelUnavailable(Exception):
     def __init__(self, errors: list[dict]):
         super().__init__(f"aucun modèle disponible : {errors}")
@@ -42,7 +51,7 @@ def call_with_fallback(
             try:
                 return model, fn(model), errors
             except Exception as e:  # noqa: BLE001 — on trie ci-dessous par code HTTP
-                code = "timeout" if isinstance(e, httpx.TransportError) else getattr(e, "code", None)
+                code = "timeout" if _is_network_error(e) else getattr(e, "code", None)
                 if code is None:
                     raise
                 err = {"model": model, "attempt": attempt, "code": code, "message": str(e)[:300]}

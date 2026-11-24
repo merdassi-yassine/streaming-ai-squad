@@ -74,6 +74,7 @@ def main(argv=None) -> int:
     s = sub.add_parser("show"); s.add_argument("run_id")
     d = sub.add_parser("decide"); d.add_argument("run_id"); d.add_argument("decision", choices=["approve", "changes", "reject"])
     d.add_argument("--feedback", default="")
+    rs = sub.add_parser("resume"); rs.add_argument("run_id")
     sub.add_parser("graph")
     a = ap.parse_args(argv)
 
@@ -90,6 +91,17 @@ def main(argv=None) -> int:
             console.print(f"[bold]▶ Run {run_id}[/bold]")
             result = graph.invoke({"run_id": run_id, "target": str(Path(a.target).resolve()), "task": task},
                                   {"configurable": {"thread_id": run_id}})
+        elif a.cmd == "resume":
+            # Reprend un run interrompu par une erreur (ex. coupure réseau) à partir du dernier nœud réussi :
+            # les étapes déjà faites (code écrit, tests exécutés) ne sont pas refaites.
+            cfg = {"configurable": {"thread_id": a.run_id}}
+            graph = build_graph(chat_factory(), cp)
+            snap = graph.get_state(cfg)
+            if snap.interrupts or not snap.next:
+                console.print(f"[red]Rien à reprendre pour {a.run_id} (en attente de décision ou terminé)[/red]")
+                return 1
+            console.print(f"[bold]↻ Reprise de {a.run_id} à l'étape {', '.join(snap.next)}[/bold]")
+            result = graph.invoke(None, cfg)
         else:
             cfg = {"configurable": {"thread_id": a.run_id}}
             graph = build_graph(chat_factory() if a.cmd == "decide" else (lambda *x: None), cp)
