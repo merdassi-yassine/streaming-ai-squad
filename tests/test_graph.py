@@ -136,3 +136,16 @@ def test_decision_invalide_refusee(repo):
     g.invoke({"run_id": "T000-r3", "target": str(repo), "task": task()}, cfg)
     with pytest.raises(ValueError, match="décision invalide"):
         g.invoke(Command(resume={"decision": "yolo"}), cfg)
+
+
+def test_changed_paths_premiere_ligne_modifiee(repo):
+    """Régression du 24/11/2026 : un fichier suivi et modifié en 1re ligne de git status était mal lu."""
+    from squad import gitops
+    (repo / "hello").mkdir()
+    (repo / "hello" / "a.py").write_text("1\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "a")
+    (repo / "hello" / "a.py").write_text("2\n")       # suivi + modifié («  M »)
+    (repo / "hello" / "b.py").write_text("nouveau\n")  # non suivi (« ?? »)
+    (repo / "autre.txt").write_text("hors dossier\n")
+    assert sorted(gitops.changed_paths(repo, ["hello/"])) == ["hello/a.py", "hello/b.py"]

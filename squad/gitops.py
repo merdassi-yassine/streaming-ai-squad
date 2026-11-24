@@ -57,7 +57,12 @@ def changed_paths(repo, allow: list[str]) -> list[str]:
     prefixes = [a.strip("/") + "/" for a in allow]
     out = []
     for line in git(repo, "status", "--porcelain", "-uall").splitlines():
-        path = line[3:].strip().strip('"')
+        # Format « XY chemin » ; git() retire l'espace initial de la 1re ligne (« M x » au lieu de «  M x ») :
+        # on découpe donc sur le premier blanc au lieu d'une position fixe.
+        parts = line.split(maxsplit=1)
+        if len(parts) != 2:
+            continue
+        path = parts[1].strip().strip('"')
         if any(path.startswith(p) for p in prefixes):
             out.append(path)
     return out
