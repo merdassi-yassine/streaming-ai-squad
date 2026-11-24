@@ -81,3 +81,32 @@ def test_historique_compacte_sans_toucher_la_trace(tmp_path):
     assert all("déjà exploité" in m["content"] for m in sent_tools[:2])
     assert all(len(m["content"]) > 5000 for m in sent_tools[2:])
     assert all(len(m["content"]) > 5000 for m in chat.transcript() if m["role"] == "tool")  # trace intacte
+
+
+def test_appel_outil_invalide_est_regenere(tmp_path, monkeypatch):
+    """HTTP 400 tool_use_failed (outil inventé, JSON cassé) : on régénère au lieu d'abandonner le modèle."""
+    monkeypatch.setattr("squad.llm.time.sleep", lambda s: None)
+    bad = FakeResp(400, {"error": {"code": "tool_use_failed", "message": "attempted to call tool 'repo_browser.x'"}})
+    http = FakeHttp([bad, ok({"content": "ok"})])
+    chat = GroqChat("k", ["m1", "m2"], "s", SPECS, Tracer(tmp_path, "r", quiet=True), "a", http=http)
+    assert chat.send_user("x").model == "m1"  # même modèle, 2e tentative
+
+
+def test_rapport_resume_un_run(tmp_path):
+    from squad.report import build_report
+    run = tmp_path / "ai-trace" / "runs" / "T9-1"
+    run.mkdir(parents=True)
+    recs = [
+        {"kind": "task", "task": {"id": "T9", "title": "Essai", "role": "dev", "write_allow": ["x/"]}},
+        {"kind": "llm_call", "model_used": "m1", "errors_before_success": [{"code": 429}], "usage": {"input_tokens": 10}},
+        {"kind": "agent_result", "iteration": 1, "files_written": ["x/a.py"]},
+        {"kind": "test_run", "iteration": 1, "exit_code": 0, "tail": "=== 3 passed in 1.0s ==="},
+        {"kind": "review", "iteration": 1, "review": "Recommandation : APPROUVER — ok"},
+        {"kind": "decision", "iteration": 1, "decision": "approve", "feedback": "", "decided_by": "PO"},
+        {"kind": "result", "result": "merged"},
+    ]
+    for i, r in enumerate(recs, 1):
+        (run / f"{i:03d}_a_{r['kind']}.json").write_text(json.dumps(r), encoding="utf-8")
+    md = build_report(tmp_path)
+    assert "| `T9-1` | T9 Essai | 1 | ✓ 3 passed in 1.0s | APPROUVER | **merged** |" in md
+    assert "429 ×1" in md and "**approve** (PO)" in md

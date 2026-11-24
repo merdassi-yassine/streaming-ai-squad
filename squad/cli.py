@@ -75,8 +75,18 @@ def main(argv=None) -> int:
     d = sub.add_parser("decide"); d.add_argument("run_id"); d.add_argument("decision", choices=["approve", "changes", "reject"])
     d.add_argument("--feedback", default="")
     rs = sub.add_parser("resume"); rs.add_argument("run_id")
+    rp = sub.add_parser("report"); rp.add_argument("--target", required=True)
+    rp.add_argument("--out", default="", help="fichier Markdown (défaut : <cible>/docs/rapport-tracabilite.md)")
     sub.add_parser("graph")
     a = ap.parse_args(argv)
+
+    if a.cmd == "report":
+        from .report import build_report
+        out = Path(a.out or Path(a.target) / "docs" / "rapport-tracabilite.md")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(build_report(a.target), encoding="utf-8", newline="\n")
+        console.print(f"Rapport écrit : {out}")
+        return 0
 
     if a.cmd == "graph":
         print(build_graph(lambda *x: None, InMemorySaver()).get_graph().draw_mermaid())

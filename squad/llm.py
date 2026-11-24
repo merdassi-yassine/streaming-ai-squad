@@ -14,7 +14,7 @@ import httpx
 from .tracing import Tracer
 
 REQUEST_TIMEOUT_MS = 90_000  # une requête bloquée plus de 90 s est abandonnée puis relancée
-RETRYABLE = {429, 500, 502, 503, 504, "timeout"}
+RETRYABLE = {429, 500, 502, 503, 504, "timeout", "tool_use_failed"}
 FATAL = {401, 403}  # problème de clé : inutile d'essayer un autre modèle
 # Offre gratuite saturée (503 sur tous les modèles, vu le 24/11/2026) : au lieu d'abandonner le run,
 # on fait une pause croissante (2, 4, 6, 8 min) avant une nouvelle série d'essais.
@@ -158,7 +158,7 @@ class GeminiChat:
 class HttpStatusError(Exception):
     """Erreur HTTP d'une API compatible OpenAI ; .code permet le tri relance / repli / fatal."""
 
-    def __init__(self, code: int, body: str):
+    def __init__(self, code: int | str, body: str):
         super().__init__(f"HTTP {code} : {body[:300]}")
         self.code = code
 
@@ -213,6 +213,10 @@ class GroqChat:
         if self.tools:
             body |= {"tools": self.tools, "tool_choice": "auto"}
         r = self.http.post(self.URL, json=body)
+        if r.status_code == 400 and "tool_use_failed" in r.text:
+            # Le modèle a généré un appel d'outil invalide (outil inventé, JSON cassé) : c'est aléatoire,
+            # une nouvelle génération réussit souvent (vu le 24/11/2026 avec gpt-oss-120b).
+            raise HttpStatusError("tool_use_failed", r.text)
         if r.status_code != 200:
             raise HttpStatusError(r.status_code, r.text)
         return r.json()
