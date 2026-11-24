@@ -4,7 +4,7 @@ title: Couche présentation (API FastAPI)
 role: backend_developer
 prompt_template: prompts/backend_developer.v2.md
 review: true
-test_command: [docker, compose, --profile, tests, run, --rm, tests, pytest, -v, -p, no:cacheprovider, tests/]
+test_command: [docker, compose, --profile, tests, run, --rm, tests, sh, -c, "python -m compileall -q streaming tests && pytest -v -p no:cacheprovider tests/"]
 test_timeout: 1800
 write_allow:
   - streaming/

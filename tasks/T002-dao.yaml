@@ -1,15 +1,20 @@
 # Phase 3 — couche 2 : DAO (accès Cassandra). Dépend de T001 (streaming/schema.py).
 id: T002
-title: Couche DAO (accès aux données Cassandra)
+title: Couche DAO (accès aux données Cassandra) — v2, un fichier par classe
 role: backend_developer
 prompt_template: prompts/backend_developer.v2.md
 review: true
-test_command: [docker, compose, --profile, tests, run, --rm, tests, pytest, -v, -p, no:cacheprovider, tests/]
+# compileall d'abord : un fichier tronqué (sortie du LLM coupée, vu au 1er essai de T002) fait échouer la tâche.
+test_command: [docker, compose, --profile, tests, run, --rm, tests, sh, -c, "python -m compileall -q streaming && python -c 'import streaming.dao' && pytest -v -p no:cacheprovider tests/"]
 test_timeout: 1800
 write_allow:
   - streaming/
 description: |
-  Crée le module `streaming/dao.py` : la SEULE couche qui parle à Cassandra. Lis d'abord
+  Crée le paquet `streaming/dao/` : la SEULE couche qui parle à Cassandra.
+  IMPORTANT : écris UN PETIT FICHIER PAR CLASSE (moins de 90 lignes chacun) — `streaming/dao/titles.py`,
+  `users.py`, `ratings.py`, `views.py`, `stats.py` — puis `streaming/dao/__init__.py` qui ré-exporte les
+  5 classes (`from .titles import TitleDAO`, etc.) pour que `from streaming.dao import TitleDAO` fonctionne.
+  Un appel `write_file` par fichier, avec le contenu COMPLET (un fichier tronqué fait échouer la tâche). Lis d'abord
   `streaming/schema.py` pour connaître exactement les tables, colonnes et clés.
   Classes attendues (chacune reçoit `session` et `keyspace` au constructeur et PRÉPARE ses requêtes une fois) :
   - `TitleDAO` : save(title) écrit la fiche (Q1) ET la ligne de titles_by_genre (Q2) pour chaque genre ;
@@ -25,6 +30,7 @@ description: |
   les compteurs ne peuvent pas être dans le même batch que des écritures normales.
   Ne crée PAS de tests dans cette tâche (ils font l'objet de T003).
 acceptance:
+  - les 6 fichiers existent, sont complets et s'importent (vérifié par compileall + import)
   - aucune requête avec ALLOW FILTERING ; chaque SELECT cible une partition
   - toutes les requêtes sont préparées une seule fois (dans __init__)
   - RatingDAO.add refuse une note hors de 1..5 (ValueError) avant toute écriture
