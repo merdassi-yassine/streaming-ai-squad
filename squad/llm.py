@@ -15,6 +15,10 @@ from .tracing import Tracer
 REQUEST_TIMEOUT_MS = 90_000  # une requête bloquée plus de 90 s est abandonnée puis relancée
 RETRYABLE = {429, 500, 502, 503, 504, "timeout"}
 FATAL = {401, 403}  # problème de clé : inutile d'essayer un autre modèle
+# Offre gratuite saturée (503 sur tous les modèles, vu le 24/11/2026) : au lieu d'abandonner le run,
+# on fait une pause croissante (2, 4, 6, 8 min) avant une nouvelle série d'essais.
+PATIENCE_ROUNDS = 5
+PATIENCE_WAIT_S = 120
 
 
 def _is_network_error(e: BaseException) -> bool:
@@ -117,12 +121,25 @@ class GeminiChat:
     def _generate(self, new_content) -> Turn:
         self.contents.append(new_content)
         start = time.time()
-        model, resp, errors = call_with_fallback(
-            self.models,
-            lambda m: self.client.models.generate_content(model=m, contents=self.contents, config=self.config),
-            on_error=lambda e: self.tracer.event(
-                self.agent, f"⚠ {e['model']} essai {e['attempt']} : erreur {e['code']} → nouvel essai / modèle suivant"),
-        )
+        errors_all: list[dict] = []
+        for round_ in range(1, PATIENCE_ROUNDS + 1):
+            try:
+                model, resp, errors = call_with_fallback(
+                    self.models,
+                    lambda m: self.client.models.generate_content(model=m, contents=self.contents, config=self.config),
+                    on_error=lambda e: self.tracer.event(
+                        self.agent, f"⚠ {e['model']} essai {e['attempt']} : erreur {e['code']} → nouvel essai / modèle suivant"),
+                )
+                errors = errors_all + errors
+                break
+            except ModelUnavailable as e:
+                errors_all += e.errors
+                if round_ == PATIENCE_ROUNDS or any(err["code"] in FATAL for err in e.errors):
+                    raise
+                wait = PATIENCE_WAIT_S * round_
+                self.tracer.event(self.agent, f"⏳ tous les modèles saturés : pause de {wait} s puis nouvelle série "
+                                              f"({round_ + 1}/{PATIENCE_ROUNDS})")
+                time.sleep(wait)
         parts = []
         if resp.candidates and resp.candidates[0].content:
             self.contents.append(resp.candidates[0].content)
