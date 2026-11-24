@@ -1,0 +1,17 @@
+# Tâche pilote de la phase 2 : volontairement simple et sans rapport avec Cassandra.
+# Elle sert à vérifier la mécanique (outils, traces, validation humaine), pas l'application.
+id: T000
+title: Fonction de salutation (tâche pilote)
+role: backend_developer
+prompt_template: prompts/backend_developer.v1.md
+write_allow:
+  - hello/
+description: |
+  Crée un module Python `hello/greeting.py` contenant une fonction
+  `greet(name: str) -> str` qui renvoie « Bonjour, <name> ! ».
+  Crée aussi des tests pytest dans `hello/test_greeting.py`.
+acceptance:
+  - greet("Yassine") renvoie exactement "Bonjour, Yassine !"
+  - les espaces autour du nom sont retirés (greet("  Ana ") renvoie "Bonjour, Ana !")
+  - un nom vide ou composé uniquement d'espaces lève ValueError
+  - au moins 3 tests pytest couvrant ces cas

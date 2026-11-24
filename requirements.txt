@@ -1,0 +1,11 @@
+# Versions installées et testées le 17/11/2026 (Python 3.13)
+langgraph==1.2.22
+langgraph-checkpoint==4.3.2
+langgraph-checkpoint-sqlite==3.1.3
+google-genai==3.4.0
+python-dotenv==1.2.4
+rich==15.0.0
+PyYAML==6.0.3
+pytest==9.2.0
+# Dépendance indirecte de LangGraph : la 4.1.0 est bloquée par Smart App Control, la 4.0.2 passe.
+xxhash==4.0.2
