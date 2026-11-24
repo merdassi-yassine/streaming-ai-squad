@@ -12,7 +12,7 @@ STATE_DB = SQUAD_ROOT / ".squad-state" / "checkpoints.sqlite"
 # (2 à 5 min perdues par étape) alors que flash-lite répondait. Surchargeable via GEMINI_MODELS dans .env.
 DEFAULT_GEMINI_MODELS = "gemini-3.5-flash-lite,gemini-3.5-flash,gemini-3.8-flash"
 # Groq (offre gratuite, sans carte) : appel d'outils vérifié le 24/11/2026 sur ces deux modèles (< 1 s).
-DEFAULT_GROQ_MODELS = "openai/gpt-oss-120b,qwen/qwen3.8-27b"
+DEFAULT_GROQ_MODELS = "openai/gpt-oss-120b,qwen/qwen3.8-27b,openai/gpt-oss-20b"
 
 
 @dataclass(frozen=True)
