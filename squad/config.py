@@ -11,6 +11,8 @@ STATE_DB = SQUAD_ROOT / ".squad-state" / "checkpoints.sqlite"
 # flash-lite d'abord : le 17/11/2026, les modèles « flash » de l'offre gratuite renvoyaient 503/504 en boucle
 # (2 à 5 min perdues par étape) alors que flash-lite répondait. Surchargeable via GEMINI_MODELS dans .env.
 DEFAULT_GEMINI_MODELS = "gemini-3.5-flash-lite,gemini-3.5-flash,gemini-3.8-flash"
+# Groq (offre gratuite, sans carte) : appel d'outils vérifié le 24/11/2026 sur ces deux modèles (< 1 s).
+DEFAULT_GROQ_MODELS = "openai/gpt-oss-120b,qwen/qwen3.8-27b"
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,9 @@ def get_settings() -> Settings:
     if provider == "gemini":
         models = os.getenv("GEMINI_MODELS", DEFAULT_GEMINI_MODELS).split(",")
         key = os.getenv("GEMINI_API_KEY", "")
+    elif provider == "groq":
+        models = os.getenv("GROQ_MODELS", DEFAULT_GROQ_MODELS).split(",")
+        key = os.getenv("GROQ_API_KEY", "")
     else:
         raise NotImplementedError(f"Fournisseur '{provider}' pas encore pris en charge (prévu plus tard).")
     if not key or key == "colle-ta-cle-ici":

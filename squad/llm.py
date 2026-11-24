@@ -4,6 +4,7 @@
 - Repli sur le modèle suivant de la liste si un modèle reste indisponible.
 - Chaque appel est archivé : entrée envoyée, réponse BRUTE, modèle réellement utilisé, jetons, erreurs.
 """
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -121,25 +122,10 @@ class GeminiChat:
     def _generate(self, new_content) -> Turn:
         self.contents.append(new_content)
         start = time.time()
-        errors_all: list[dict] = []
-        for round_ in range(1, PATIENCE_ROUNDS + 1):
-            try:
-                model, resp, errors = call_with_fallback(
-                    self.models,
-                    lambda m: self.client.models.generate_content(model=m, contents=self.contents, config=self.config),
-                    on_error=lambda e: self.tracer.event(
-                        self.agent, f"⚠ {e['model']} essai {e['attempt']} : erreur {e['code']} → nouvel essai / modèle suivant"),
-                )
-                errors = errors_all + errors
-                break
-            except ModelUnavailable as e:
-                errors_all += e.errors
-                if round_ == PATIENCE_ROUNDS or any(err["code"] in FATAL for err in e.errors):
-                    raise
-                wait = PATIENCE_WAIT_S * round_
-                self.tracer.event(self.agent, f"⏳ tous les modèles saturés : pause de {wait} s puis nouvelle série "
-                                              f"({round_ + 1}/{PATIENCE_ROUNDS})")
-                time.sleep(wait)
+        model, resp, errors = call_patiently(
+            self.models,
+            lambda m: self.client.models.generate_content(model=m, contents=self.contents, config=self.config),
+            self.tracer, self.agent)
         parts = []
         if resp.candidates and resp.candidates[0].content:
             self.contents.append(resp.candidates[0].content)
@@ -168,7 +154,105 @@ class GeminiChat:
         return [c.model_dump(mode="json", exclude_none=True) for c in self.contents]
 
 
+class HttpStatusError(Exception):
+    """Erreur HTTP d'une API compatible OpenAI ; .code permet le tri relance / repli / fatal."""
+
+    def __init__(self, code: int, body: str):
+        super().__init__(f"HTTP {code} : {body[:300]}")
+        self.code = code
+
+
+class GroqChat:
+    """Conversation avec Groq (API compatible OpenAI, offre gratuite) + appels d'outils.
+
+    Ajouté le 24/11/2026 : l'offre gratuite de Gemini renvoyait 503 sur tous ses modèles pendant des heures.
+    Même interface que GeminiChat (send_user / send_tool_results / transcript) : le reste du moteur ne change pas.
+    """
+    URL = "https://api.groq.com/openai/v1/chat/completions"
+
+    def __init__(self, api_key: str, models: list[str], system: str, tool_specs: list[dict],
+                 tracer: Tracer, agent: str, http=None):
+        self.http = http or httpx.Client(timeout=REQUEST_TIMEOUT_MS / 1000,
+                                         headers={"Authorization": f"Bearer {api_key}"})
+        self.models, self.tracer, self.agent, self.system = models, tracer, agent, system
+        self.messages: list[dict] = [{"role": "system", "content": system}]
+        self.tools = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
+                                                         "parameters": t["parameters"]}} for t in tool_specs]
+        self._pending_ids: list[str] = []
+
+    def send_user(self, text: str) -> Turn:
+        return self._generate({"role": "user", "content": text})
+
+    def send_tool_results(self, results: list[tuple[str, dict]]) -> Turn:
+        new = [{"role": "tool", "tool_call_id": cid, "name": name, "content": json.dumps(res, ensure_ascii=False)}
+               for cid, (name, res) in zip(self._pending_ids, results)]
+        return self._generate(*new)
+
+    def _post(self, model: str) -> dict:
+        body = {"model": model, "messages": list(self.messages), "temperature": 0.2}
+        if self.tools:
+            body |= {"tools": self.tools, "tool_choice": "auto"}
+        r = self.http.post(self.URL, json=body)
+        if r.status_code != 200:
+            raise HttpStatusError(r.status_code, r.text)
+        return r.json()
+
+    def _generate(self, *new: dict) -> Turn:
+        self.messages.extend(new)
+        start = time.time()
+        model, resp, errors = call_patiently(self.models, self._post, self.tracer, self.agent)
+        msg = resp["choices"][0]["message"]
+        self.messages.append({k: v for k, v in msg.items() if k in ("role", "content", "tool_calls")})
+        calls, self._pending_ids = [], []
+        for c in msg.get("tool_calls") or []:
+            try:
+                args = json.loads(c["function"].get("arguments") or "{}")
+            except json.JSONDecodeError:
+                args = {"_arguments_invalides": c["function"].get("arguments")}
+            calls.append(ToolCall(c["function"]["name"], args))
+            self._pending_ids.append(c["id"])
+        usage = resp.get("usage") or {}
+        self.tracer.record("llm_call", self.agent, {
+            "provider": "groq",
+            "models_requested": self.models,
+            "model_used": model,
+            "errors_before_success": errors,
+            "latency_s": round(time.time() - start, 2),
+            "system_prompt": self.system if len(self.messages) <= 3 else "(identique au 1er appel)",
+            "input": list(new),
+            "response_raw": resp,
+            "usage": {"input_tokens": usage.get("prompt_tokens"), "output_tokens": usage.get("completion_tokens")},
+        })
+        self.tracer.event(self.agent, f"réponse de groq:{model} ({time.time() - start:.0f} s)")
+        return Turn(text=msg.get("content") or "", tool_calls=calls, model=model)
+
+    def transcript(self) -> list[dict]:
+        return self.messages
+
+
+def call_patiently(models: list[str], fn: Callable[[str], Any], tracer: Tracer, agent: str):
+    """call_with_fallback + pauses croissantes si TOUS les modèles sont saturés (au lieu d'interrompre le run)."""
+    errors_all: list[dict] = []
+    for round_ in range(1, PATIENCE_ROUNDS + 1):
+        try:
+            model, resp, errors = call_with_fallback(
+                models, fn, on_error=lambda e: tracer.event(
+                    agent, f"⚠ {e['model']} essai {e['attempt']} : erreur {e['code']} → nouvel essai / modèle suivant"))
+            return model, resp, errors_all + errors
+        except ModelUnavailable as e:
+            errors_all += e.errors
+            if round_ == PATIENCE_ROUNDS or any(err["code"] in FATAL for err in e.errors):
+                raise
+            wait = PATIENCE_WAIT_S * round_
+            tracer.event(agent, f"⏳ tous les modèles saturés : pause de {wait} s puis nouvelle série "
+                                f"({round_ + 1}/{PATIENCE_ROUNDS})")
+            time.sleep(wait)
+    raise AssertionError("inaccessible")
+
+
 def make_chat(settings, system: str, tool_specs: list[dict], tracer: Tracer, agent: str):
     if settings.provider == "gemini":
         return GeminiChat(settings.api_key, settings.models, system, tool_specs, tracer, agent)
+    if settings.provider == "groq":
+        return GroqChat(settings.api_key, settings.models, system, tool_specs, tracer, agent)
     raise NotImplementedError(settings.provider)

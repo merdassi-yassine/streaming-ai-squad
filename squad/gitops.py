@@ -48,6 +48,21 @@ def commit_paths(repo, paths: list[str], message: str, identity=None) -> str:
     return git(repo, "rev-parse", "--short", "HEAD")
 
 
+def changed_paths(repo, allow: list[str]) -> list[str]:
+    """Fichiers modifiés ou nouveaux (non commités) situés dans les dossiers autorisés de la tâche.
+
+    Sert après une reprise (squad resume) : les écritures d'une itération interrompue restent dans
+    l'arbre de travail et doivent être commitées avec l'itération reprise (bug vu le 24/11/2026 sur T001).
+    """
+    prefixes = [a.strip("/") + "/" for a in allow]
+    out = []
+    for line in git(repo, "status", "--porcelain", "-uall").splitlines():
+        path = line[3:].strip().strip('"')
+        if any(path.startswith(p) for p in prefixes):
+            out.append(path)
+    return out
+
+
 def diff(repo, branch: str) -> str:
     return git(repo, "diff", f"{MAIN}...{branch}")
 

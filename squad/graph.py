@@ -94,6 +94,10 @@ def build_graph(chat_factory: Callable, checkpointer, quiet: bool = False):
         t.record("agent_result", agent, {"iteration": it, "summary": res.summary, "steps": res.steps,
                                           "stop_reason": res.stop_reason, "files_written": ws.written})
 
+        leftovers = [p for p in gitops.changed_paths(s["target"], task["write_allow"]) if p not in ws.written]
+        if leftovers:
+            t.event("orchestrator", f"écritures d'une tentative interrompue ajoutées au commit : {', '.join(leftovers)}")
+            ws.written += leftovers
         sha = ""
         if ws.written:
             msg = (f"{task['id']} : {task['title']} (itération {it})\n\n{res.summary[:1500]}\n\n"
