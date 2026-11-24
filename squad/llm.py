@@ -20,6 +20,7 @@ FATAL = {401, 403}  # problème de clé : inutile d'essayer un autre modèle
 # on fait une pause croissante (2, 4, 6, 8 min) avant une nouvelle série d'essais.
 PATIENCE_ROUNDS = 5
 PATIENCE_WAIT_S = 120
+MAX_TOOL_CHARS = 12_000  # ~3 000 jetons : un résultat d'outil récent ne peut pas dépasser ça (Groq gratuit)
 
 
 def _is_network_error(e: BaseException) -> bool:
@@ -188,8 +189,27 @@ class GroqChat:
                for cid, (name, res) in zip(self._pending_ids, results)]
         return self._generate(*new)
 
+    def _compacted(self) -> list[dict]:
+        """Historique envoyé à l'API, réduit pour tenir sous la limite de l'offre gratuite.
+
+        L'offre gratuite de Groq refuse une requête plus grosse que le quota de jetons par minute (HTTP 413,
+        vu le 24/11/2026 : ~8 000 jetons). Les résultats d'outils déjà exploités (contenus de fichiers lus)
+        sont remplacés par un court rappel ; les 2 derniers restent complets. self.messages (la trace) n'est
+        pas modifié : seule la copie envoyée est réduite.
+        """
+        msgs = [dict(m) for m in self.messages]
+        tool_idx = [i for i, m in enumerate(msgs) if m["role"] == "tool"]
+        for i in tool_idx[:-2]:
+            if len(msgs[i]["content"]) > 300:
+                msgs[i]["content"] = json.dumps({"note": "résultat déjà exploité, retiré pour économiser le quota ; "
+                                                         "relis le fichier si besoin"}, ensure_ascii=False)
+        for i in tool_idx[-2:]:
+            if len(msgs[i]["content"]) > MAX_TOOL_CHARS:
+                msgs[i]["content"] = msgs[i]["content"][:MAX_TOOL_CHARS] + "\n…(tronqué)"
+        return msgs
+
     def _post(self, model: str) -> dict:
-        body = {"model": model, "messages": list(self.messages), "temperature": 0.2}
+        body = {"model": model, "messages": self._compacted(), "temperature": 0.2}
         if self.tools:
             body |= {"tools": self.tools, "tool_choice": "auto"}
         r = self.http.post(self.URL, json=body)

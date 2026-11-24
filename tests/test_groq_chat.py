@@ -64,3 +64,20 @@ def test_cle_invalide_arrete_immediatement(tmp_path, monkeypatch):
     with pytest.raises(Exception, match="401"):
         chat.send_user("x")
     assert len(http.bodies) == 1  # pas d'essai inutile sur un autre modèle
+
+
+def test_historique_compacte_sans_toucher_la_trace(tmp_path):
+    """Évite le HTTP 413 de l'offre gratuite : les vieux résultats d'outils ne sont pas renvoyés en entier."""
+    big = {"ok": True, "content": "x" * 5000}
+    http = FakeHttp([ok({"content": None, "tool_calls": [
+        {"id": f"c{i}", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}]})
+        for i in range(4)] + [ok({"content": "fin"})])
+    chat = GroqChat("k", ["m"], "s", SPECS, Tracer(tmp_path, "r", quiet=True), "a", http=http)
+    chat.send_user("x")
+    for _ in range(4):
+        chat.send_tool_results([("read_file", big)])
+    sent_tools = [m for m in http.bodies[-1]["messages"] if m["role"] == "tool"]
+    assert len(sent_tools) == 4
+    assert all("déjà exploité" in m["content"] for m in sent_tools[:2])
+    assert all(len(m["content"]) > 5000 for m in sent_tools[2:])
+    assert all(len(m["content"]) > 5000 for m in chat.transcript() if m["role"] == "tool")  # trace intacte
