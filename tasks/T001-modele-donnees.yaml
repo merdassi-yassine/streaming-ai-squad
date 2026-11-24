@@ -1,0 +1,45 @@
+# Phase 3 — couche 1 : modèle de données Cassandra (orienté requêtes).
+id: T001
+title: Modèle de données Cassandra (schéma CQL orienté requêtes)
+role: backend_developer
+prompt_template: prompts/backend_developer.v2.md
+write_allow:
+  - streaming/
+  - tests/
+review: true
+test_command: [docker, compose, --profile, tests, run, --rm, tests, pytest, -v, -p, no:cacheprovider, tests/]
+test_timeout: 1800
+description: |
+  Crée le paquet Python `streaming/` (avec `streaming/__init__.py`) et le module `streaming/schema.py`
+  qui définit le schéma Cassandra de la plateforme.
+
+  Requêtes que l'application devra servir (une table par requête) :
+  - Q1 : fiche d'un titre (film ou série) par son identifiant.
+  - Q2 : titres d'un genre, du plus récent au plus ancien.
+  - Q3 : profil d'un utilisateur par son identifiant.
+  - Q4 : avis (note 1 à 5 + commentaire) d'un titre, du plus récent au plus ancien.
+  - Q5 : avis donnés par un utilisateur, du plus récent au plus ancien.
+  - Q6 : historique de visionnage d'un utilisateur, du plus récent au plus ancien.
+  - Q7 : statistiques d'un titre : nombre de vues, somme et nombre des notes (compteurs).
+  - Q8 : nombre de vues de chaque titre pour un jour donné (pour calculer le Top 10 du jour).
+
+  Contenu attendu de `streaming/schema.py` :
+  - une constante `KEYSPACE = "streaming"` ;
+  - une fonction `create_schema(session, keyspace: str = KEYSPACE, replication_factor: int = 3) -> None`
+    qui crée le keyspace (NetworkTopologyStrategy, datacenter `dc1`) et toutes les tables avec
+    `IF NOT EXISTS` (idempotente : on peut l'appeler deux fois) ;
+  - une fonction `drop_schema(session, keyspace: str) -> None` ;
+  - une constante `TABLES` : la liste des noms de tables créées.
+  Chaque table doit avoir un commentaire indiquant la requête (Q1..Q8) qu'elle sert.
+
+  Crée aussi `tests/test_schema.py` qui, sur un keyspace de test dédié (ex. `streaming_test_schema`) :
+  vérifie que toutes les tables de `TABLES` existent après `create_schema`, que l'appel est idempotent,
+  que les clés de partition/clustering de 2 ou 3 tables importantes sont celles attendues (via
+  `cluster.metadata`), et supprime le keyspace à la fin.
+acceptance:
+  - create_schema crée le keyspace avec NetworkTopologyStrategy et dc1 = replication_factor
+  - une table par requête Q1 à Q8, chacune commentée avec sa requête
+  - les tables d'historique/avis sont triées du plus récent au plus ancien (clustering DESC)
+  - les statistiques utilisent des colonnes counter, dans des tables ne contenant que des counters
+  - create_schema est idempotente (IF NOT EXISTS) ; drop_schema supprime le keyspace
+  - tests/test_schema.py n'utilise pas le keyspace « streaming » et nettoie son keyspace de test

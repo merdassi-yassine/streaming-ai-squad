@@ -35,10 +35,18 @@ def show_pending(result_or_state, with_diff: bool = True) -> None:
     if not interrupts:
         return
     p = interrupts[0].value
+    tests = p.get("tests")
+    if not tests:
+        tests_txt = "non configurés pour cette tâche"
+    else:
+        status = "[green]✓ OK[/green]" if tests["passed"] else f"[red]✗ ÉCHEC (code {tests['exit_code']})[/red]"
+        tests_txt = f"{status} — exécutés par l'orchestrateur ({tests['log']})\n{tests['tail']}"
     console.print(Panel.fit(
         f"[bold]{p['task']} — {p['title']}[/bold]  (itération {p['iteration']}, branche {p['branch']})\n\n"
-        f"[bold]Résumé de l'agent :[/bold]\n{p['summary'] or '(vide)'}\n\n"
-        f"[bold]Fichiers :[/bold]\n{p['diff_stat'] or '(aucun changement)'}",
+        f"[bold]Résumé de l'agent développeur :[/bold]\n{p['summary'] or '(vide)'}\n\n"
+        f"[bold]Fichiers :[/bold]\n{p['diff_stat'] or '(aucun changement)'}\n\n"
+        f"[bold]Tests réels :[/bold] {tests_txt}"
+        + (f"\n\n[bold]Avis de l'agent relecteur :[/bold]\n{p['review']}" if p.get("review") else ""),
         title="⏸ VALIDATION HUMAINE REQUISE", border_style="magenta"))
     if with_diff:
         diff = Path(p["patch"]).read_text(encoding="utf-8")

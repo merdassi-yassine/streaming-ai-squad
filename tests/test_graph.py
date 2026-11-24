@@ -112,6 +112,25 @@ def test_corrections_puis_rejet(repo):
     assert "Trace T000-r2" in git(repo, "log", "-1", "--format=%s")
 
 
+def test_tests_reels_et_relecteur(repo):
+    """L'orchestrateur lance VRAIMENT la commande de test ; le relecteur ne peut rien écrire."""
+    import sys
+    g, cfg = make_graph(), {"configurable": {"thread_id": "r4"}}
+    t = task() | {"test_command": [sys.executable, "-c", "print('3 passed'); raise SystemExit(1)"], "review": True}
+    out = g.invoke({"run_id": "T000-r4", "target": str(repo), "task": t}, cfg)
+
+    pending = out["__interrupt__"][0].value
+    assert pending["tests"]["exit_code"] == 1 and pending["tests"]["passed"] is False  # vrai code de retour
+    assert "3 passed" in pending["tests"]["tail"]
+    assert pending["review"] == "Résumé v2"  # 2e agent (relecteur) appelé après le développeur
+    run = repo / "ai-trace/runs/T000-r4"
+    assert (run / "tests_iter1.log").read_text(encoding="utf-8").startswith("3 passed")
+    assert {"test_run", "review"} <= set(trace_kinds(repo, "T000-r4"))
+    # Le relecteur a tenté d'écrire (faux LLM) : refusé, rien de commité en son nom.
+    assert "reviewer" not in git(repo, "log", "--all", "--format=%an")
+    assert git(repo, "show", f"{pending['branch']}:hello/greeting.py") == "V = 1"
+
+
 def test_decision_invalide_refusee(repo):
     g, cfg = make_graph(), {"configurable": {"thread_id": "r3"}}
     g.invoke({"run_id": "T000-r3", "target": str(repo), "task": task()}, cfg)

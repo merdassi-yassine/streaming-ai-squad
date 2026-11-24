@@ -1,9 +1,12 @@
-"""Graphe LangGraph de la phase 2 : un agent (Backend Developer) + validation humaine obligatoire.
+"""Graphe LangGraph : agent développeur → tests réels → agent relecteur → validation humaine obligatoire.
 
-    START → prepare → developer → human_review ─┬─ approve → merge   → END
-                         ▲                      ├─ changes → developer (avec ton retour)
-                         └──────────────────────┘
-                                                └─ reject  → discard → END
+    START → prepare → developer → run_tests → reviewer → human_review ─┬─ approve → merge   → END
+                         ▲                                             ├─ changes → developer (avec ton retour)
+                         └─────────────────────────────────────────────┘
+                                                                       └─ reject  → discard → END
+
+run_tests (si la tâche a un test_command) : exécuté par l'orchestrateur, jamais par le LLM.
+reviewer (si la tâche a review: true) : 2e agent en lecture seule, ses remarques te sont montrées.
 
 human_review utilise interrupt() : le programme s'arrête et l'état est sauvegardé (SQLite).
 Il reprend seulement quand tu donnes ta décision (python -m squad decide ...).
@@ -21,6 +24,8 @@ from .config import SQUAD_ROOT
 from .tracing import Tracer
 from .workspace import TOOL_SPECS, Workspace
 
+READ_ONLY_SPECS = [spec for spec in TOOL_SPECS if spec["name"] != "write_file"]
+
 DECISIONS = {"approve", "changes", "reject"}
 
 
@@ -36,6 +41,8 @@ class SquadState(TypedDict, total=False):
     commits: list[str]
     decision: str
     result: str
+    tests: dict | None
+    review: str
 
 
 def human_name() -> str:
@@ -69,6 +76,12 @@ def build_graph(chat_factory: Callable, checkpointer, quiet: bool = False):
         user = p.user
         if s.get("feedback"):
             user += f"\n\n## Retour du Project Owner (itération {it})\n{s['feedback']}\nCorrige en conséquence."
+        prev = s.get("tests")
+        if prev and not prev["passed"]:
+            user += (f"\n\n## Résultat réel des tests de l'itération précédente (ÉCHEC, code {prev['exit_code']})\n"
+                     f"```\n{prev['tail']}\n```")
+        if s.get("review"):
+            user += f"\n\n## Avis du relecteur (itération précédente)\n{s['review']}"
         t.record("prompt", agent, {"iteration": it, "template": tpl.path, "template_id": p.template_id,
                                     "template_version": p.template_version, "system": p.system, "user": user})
         t.event(agent, f"itération {it} : démarrage (prompt {p.template_id} v{p.template_version})")
@@ -88,7 +101,58 @@ def build_graph(chat_factory: Callable, checkpointer, quiet: bool = False):
             sha = gitops.commit_paths(s["target"], ws.written, msg, identity=gitops.agent_identity(agent))
         t.event("orchestrator", f"commit {sha or '(aucun fichier modifié)'} sur {s['branch']}")
         return {"iteration": it, "summary": res.summary, "files": ws.written,
-                "commits": s.get("commits", []) + ([sha] if sha else []), "feedback": ""}
+                "commits": s.get("commits", []) + ([sha] if sha else []), "feedback": "",
+                "tests": None, "review": ""}
+
+    def run_tests(s: SquadState) -> dict:
+        """Les tests sont lancés par l'ORCHESTRATEUR (pas par le LLM) : le résultat est réel et archivé tel quel."""
+        t, task, it = tracer(s), s["task"], s["iteration"]
+        cmd = task.get("test_command")
+        if not cmd:
+            return {"tests": None}
+        t.event("orchestrator", f"tests réels : {' '.join(cmd)}")
+        try:
+            r = subprocess.run(cmd, cwd=s["target"], capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=task.get("test_timeout", 1800))
+            code, out = r.returncode, (r.stdout or "") + (r.stderr or "")
+        except subprocess.TimeoutExpired as e:
+            code, out = -1, f"DÉLAI DÉPASSÉ ({e.timeout} s)\n{e.stdout or ''}"
+        except FileNotFoundError as e:
+            code, out = -2, f"commande introuvable : {e}"
+        log = t.write_text(f"tests_iter{it}.log", out)
+        tail = "\n".join(out.strip().splitlines()[-25:])
+        result = {"iteration": it, "command": cmd, "exit_code": code, "passed": code == 0,
+                  "log": log.name, "tail": tail}
+        t.record("test_run", "orchestrator", result)
+        t.event("orchestrator", f"tests {'✓ OK' if code == 0 else f'✗ ÉCHEC (code {code})'} → {log.name}")
+        return {"tests": result}
+
+    def reviewer(s: SquadState) -> dict:
+        """Relecture par un 2e agent, en LECTURE SEULE : il commente, il ne modifie rien."""
+        t, task, it = tracer(s), s["task"], s["iteration"]
+        if not task.get("review"):
+            return {"review": ""}
+        tpl = prompts.load(SQUAD_ROOT / task.get("review_template", "prompts/reviewer.v1.md"))
+        tests = s.get("tests")
+        tests_txt = ("non exécutés pour cette tâche" if not tests else
+                     f"commande `{' '.join(tests['command'])}` → code {tests['exit_code']} "
+                     f"({'succès' if tests['passed'] else 'ÉCHEC'})\n```\n{tests['tail']}\n```")
+        p = prompts.render(
+            tpl, task_id=task["id"], task_title=task["title"], task_description=task["description"].strip(),
+            acceptance="\n".join(f"- {a}" for a in task.get("acceptance", [])),
+            diff=gitops.diff(s["target"], s["branch"])[:40_000], tests=tests_txt,
+        )
+        t.record("prompt", "reviewer", {"iteration": it, "template": tpl.path, "template_id": p.template_id,
+                                        "template_version": p.template_version, "system": p.system, "user": p.user})
+        t.event("reviewer", f"itération {it} : relecture (prompt {p.template_id} v{p.template_version})")
+        ws = Workspace(s["target"], [])  # aucune écriture autorisée
+        chat = chat_factory(p.system, READ_ONLY_SPECS, t, "reviewer")
+        res = run_agent(chat, ws, p.user, t, "reviewer")
+        t.write_text(f"conversation_reviewer_iter{it}.json",
+                     json.dumps(chat.transcript(), ensure_ascii=False, indent=2, default=str))
+        t.record("review", "reviewer", {"iteration": it, "review": res.summary, "steps": res.steps,
+                                         "stop_reason": res.stop_reason})
+        return {"review": res.summary}
 
     def human_review(s: SquadState) -> dict:
         t, it = tracer(s), s["iteration"]
@@ -97,6 +161,7 @@ def build_graph(chat_factory: Callable, checkpointer, quiet: bool = False):
             "run_id": s["run_id"], "task": s["task"]["id"], "title": s["task"]["title"],
             "iteration": it, "branch": s["branch"], "summary": s.get("summary", ""),
             "diff_stat": gitops.diff_stat(s["target"], s["branch"]), "patch": str(patch),
+            "tests": s.get("tests"), "review": s.get("review", ""),
         })
         decision = answer.get("decision")
         if decision not in DECISIONS:
@@ -124,12 +189,15 @@ def build_graph(chat_factory: Callable, checkpointer, quiet: bool = False):
         return {"result": "rejected"}
 
     g = StateGraph(SquadState)
-    for name, fn in [("prepare", prepare), ("developer", developer), ("human_review", human_review),
+    for name, fn in [("prepare", prepare), ("developer", developer), ("run_tests", run_tests),
+                     ("reviewer", reviewer), ("human_review", human_review),
                      ("merge", merge), ("discard", discard)]:
         g.add_node(name, fn)
     g.add_edge(START, "prepare")
     g.add_edge("prepare", "developer")
-    g.add_edge("developer", "human_review")
+    g.add_edge("developer", "run_tests")
+    g.add_edge("run_tests", "reviewer")
+    g.add_edge("reviewer", "human_review")
     g.add_conditional_edges("human_review", lambda s: {"approve": "merge", "changes": "developer",
                                                         "reject": "discard"}[s["decision"]],
                             ["merge", "developer", "discard"])
