@@ -66,21 +66,35 @@ def test_cle_invalide_arrete_immediatement(tmp_path, monkeypatch):
     assert len(http.bodies) == 1  # pas d'essai inutile sur un autre modèle
 
 
-def test_historique_compacte_sans_toucher_la_trace(tmp_path):
-    """Évite le HTTP 413 de l'offre gratuite : les vieux résultats d'outils ne sont pas renvoyés en entier."""
-    big = {"ok": True, "content": "x" * 5000}
-    http = FakeHttp([ok({"content": None, "tool_calls": [
-        {"id": f"c{i}", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}]})
-        for i in range(4)] + [ok({"content": "fin"})])
+def _reads(paths):
+    return [ok({"content": None, "tool_calls": [
+        {"id": f"c{i}", "type": "function", "function": {"name": "read_file", "arguments": json.dumps({"path": p})}}]})
+        for i, p in enumerate(paths)]
+
+
+def test_relecture_dun_meme_fichier_dedoublonnee(tmp_path):
+    """Seule la dernière lecture d'un même fichier est renvoyée ; les autres fichiers restent complets."""
+    http = FakeHttp(_reads(["a.py", "b.py", "a.py"]) + [ok({"content": "fin"})])
     chat = GroqChat("k", ["m"], "s", SPECS, Tracer(tmp_path, "r", quiet=True), "a", http=http)
     chat.send_user("x")
-    for _ in range(4):
-        chat.send_tool_results([("read_file", big)])
-    sent_tools = [m for m in http.bodies[-1]["messages"] if m["role"] == "tool"]
-    assert len(sent_tools) == 4
-    assert all("déjà exploité" in m["content"] for m in sent_tools[:2])
-    assert all(len(m["content"]) > 5000 for m in sent_tools[2:])
-    assert all(len(m["content"]) > 5000 for m in chat.transcript() if m["role"] == "tool")  # trace intacte
+    for p in ["a.py", "b.py", "a.py"]:
+        chat.send_tool_results([("read_file", {"ok": True, "content": p * 1000})])
+    tools = [m for m in http.bodies[-1]["messages"] if m["role"] == "tool"]
+    assert "identique fourni plus loin" in tools[0]["content"]          # 1re lecture de a.py
+    assert len(tools[1]["content"]) > 3000 and len(tools[2]["content"]) > 3000  # b.py et dernière lecture de a.py
+    assert all(len(m["content"]) > 3000 for m in chat.transcript() if m["role"] == "tool")  # trace intacte
+
+
+def test_historique_trop_gros_reduit_par_le_debut(tmp_path):
+    http = FakeHttp(_reads(["a", "b", "c", "d"]) + [ok({"content": "fin"})])
+    chat = GroqChat("k", ["m"], "s", SPECS, Tracer(tmp_path, "r", quiet=True), "a", http=http)
+    chat.send_user("x")
+    for p in "abcd":
+        chat.send_tool_results([("read_file", {"ok": True, "content": p * 9000})])
+    tools = [m for m in http.bodies[-1]["messages"] if m["role"] == "tool"]
+    assert "retiré (quota)" in tools[0]["content"]
+    assert sum(len(m.get("content") or "") for m in http.bodies[-1]["messages"]) <= 22_000 + 100
+    assert len(tools[-1]["content"]) > 9000  # le plus récent reste complet
 
 
 def test_appel_outil_invalide_est_regenere(tmp_path, monkeypatch):

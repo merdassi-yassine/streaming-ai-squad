@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from .tracing import Tracer
 from .workspace import Workspace
 
-MAX_STEPS = 15  # garde-fou : un agent qui tourne en rond s'arrête
+MAX_STEPS = 30  # garde-fou : un agent qui tourne en rond s'arrête (15 était trop court pour 6 fichiers)
 
 
 @dataclass

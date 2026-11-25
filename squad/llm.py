@@ -20,7 +20,8 @@ FATAL = {401, 403}  # problème de clé : inutile d'essayer un autre modèle
 # on fait une pause croissante (2, 4, 6, 8 min) avant une nouvelle série d'essais.
 PATIENCE_ROUNDS = 5
 PATIENCE_WAIT_S = 120
-MAX_TOOL_CHARS = 12_000  # ~3 000 jetons : un résultat d'outil récent ne peut pas dépasser ça (Groq gratuit)
+MAX_TOOL_CHARS = 12_000  # ~3 000 jetons : un résultat d'outil ne peut pas dépasser ça (Groq gratuit)
+MAX_TOTAL_CHARS = 22_000  # ~5 500 jetons d'historique : laisse de la place à la réponse sous ~8 000 jetons/min
 
 
 def _is_network_error(e: BaseException) -> bool:
@@ -180,6 +181,7 @@ class GroqChat:
         self.tools = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
                                                          "parameters": t["parameters"]}} for t in tool_specs]
         self._pending_ids: list[str] = []
+        self._call_keys: dict[str, str] = {}  # id d'appel → « read_file(chemin) » pour dédoublonner les relectures
 
     def send_user(self, text: str) -> Turn:
         return self._generate({"role": "user", "content": text})
@@ -199,13 +201,32 @@ class GroqChat:
         """
         msgs = [dict(m) for m in self.messages]
         tool_idx = [i for i, m in enumerate(msgs) if m["role"] == "tool"]
-        for i in tool_idx[:-2]:
-            if len(msgs[i]["content"]) > 300:
-                msgs[i]["content"] = json.dumps({"note": "résultat déjà exploité, retiré pour économiser le quota ; "
-                                                         "relis le fichier si besoin"}, ensure_ascii=False)
-        for i in tool_idx[-2:]:
+        # 1) Une lecture déjà refaite plus loin est inutile : seule la DERNIÈRE lecture d'un même fichier
+        #    (ou du même list_files) est gardée. Masquer toutes les anciennes lectures faisait relire les
+        #    mêmes fichiers en boucle (T002 v2, 25/11/2026 : 14 étapes sur 15 perdues en relectures).
+        last_for_key: dict[str, int] = {}
+        for i in tool_idx:
+            key = self._call_keys.get(msgs[i]["tool_call_id"])
+            if key:
+                last_for_key[key] = i
+        for i in tool_idx:
+            key = self._call_keys.get(msgs[i]["tool_call_id"])
+            if key and last_for_key[key] != i:
+                msgs[i]["content"] = json.dumps({"note": f"{key} : contenu identique fourni plus loin"},
+                                                ensure_ascii=False)
+        # 2) Si c'est encore trop gros : on tronque, en commençant par les plus anciens résultats.
+        for i in tool_idx:
             if len(msgs[i]["content"]) > MAX_TOOL_CHARS:
                 msgs[i]["content"] = msgs[i]["content"][:MAX_TOOL_CHARS] + "\n…(tronqué)"
+        total = sum(len(m.get("content") or "") for m in msgs)
+        for i in tool_idx[:-2]:
+            if total <= MAX_TOTAL_CHARS:
+                break
+            old = len(msgs[i]["content"])
+            if old > 300:
+                msgs[i]["content"] = json.dumps({"note": "ancien résultat retiré (quota) ; ne relis ce fichier "
+                                                         "que si c'est indispensable"}, ensure_ascii=False)
+                total -= old - len(msgs[i]["content"])
         return msgs
 
     def _post(self, model: str) -> dict:
@@ -233,8 +254,11 @@ class GroqChat:
                 args = json.loads(c["function"].get("arguments") or "{}")
             except json.JSONDecodeError:
                 args = {"_arguments_invalides": c["function"].get("arguments")}
-            calls.append(ToolCall(c["function"]["name"], args))
+            name = c["function"]["name"]
+            calls.append(ToolCall(name, args))
             self._pending_ids.append(c["id"])
+            if name in ("read_file", "list_files"):
+                self._call_keys[c["id"]] = f"{name}({args.get('path') or args.get('directory') or '.'})"
         usage = resp.get("usage") or {}
         self.tracer.record("llm_call", self.agent, {
             "provider": "groq",
