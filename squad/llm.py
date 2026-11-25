@@ -21,6 +21,7 @@ FATAL = {401, 403}  # problème de clé : inutile d'essayer un autre modèle
 PATIENCE_ROUNDS = 5
 PATIENCE_WAIT_S = 120
 MAX_TOOL_CHARS = 12_000  # ~3 000 jetons : un résultat d'outil ne peut pas dépasser ça (Groq gratuit)
+MAX_COMPLETION_TOKENS = 4_096
 MAX_TOTAL_CHARS = 22_000  # ~5 500 jetons d'historique : laisse de la place à la réponse sous ~8 000 jetons/min
 
 
@@ -230,7 +231,10 @@ class GroqChat:
         return msgs
 
     def _post(self, model: str) -> dict:
-        body = {"model": model, "messages": self._compacted(), "temperature": 0.2}
+        # max_completion_tokens explicite : sans lui, qwen s'arrêtait vers 300 jetons au milieu d'un
+        # write_file (users.py tronqué, T002 v2 itération 2, 25/11/2026).
+        body = {"model": model, "messages": self._compacted(), "temperature": 0.2,
+                "max_completion_tokens": MAX_COMPLETION_TOKENS}
         if self.tools:
             body |= {"tools": self.tools, "tool_choice": "auto"}
         r = self.http.post(self.URL, json=body)
