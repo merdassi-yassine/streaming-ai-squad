@@ -93,7 +93,7 @@ def test_historique_trop_gros_reduit_par_le_debut(tmp_path):
         chat.send_tool_results([("read_file", {"ok": True, "content": p * 9000})])
     tools = [m for m in http.bodies[-1]["messages"] if m["role"] == "tool"]
     assert "retiré (quota)" in tools[0]["content"]
-    assert sum(len(m.get("content") or "") for m in http.bodies[-1]["messages"]) <= 22_000 + 100
+    assert sum(len(m.get("content") or "") for m in http.bodies[-1]["messages"]) <= 16_000 + 100
     assert len(tools[-1]["content"]) > 9000  # le plus récent reste complet
 
 

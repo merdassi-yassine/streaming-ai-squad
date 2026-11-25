@@ -22,7 +22,8 @@ PATIENCE_ROUNDS = 5
 PATIENCE_WAIT_S = 120
 MAX_TOOL_CHARS = 12_000  # ~3 000 jetons : un résultat d'outil ne peut pas dépasser ça (Groq gratuit)
 MAX_COMPLETION_TOKENS = 4_096
-MAX_TOTAL_CHARS = 22_000  # ~5 500 jetons d'historique : laisse de la place à la réponse sous ~8 000 jetons/min
+TPM_LIMIT = 8_000  # jetons par minute de l'offre gratuite Groq (gpt-oss), entrée + sortie demandée
+MAX_TOTAL_CHARS = 16_000  # ~4 500 jetons d'historique : laisse ~3 000 jetons à la réponse sous 8 000 jetons/min
 
 
 def _is_network_error(e: BaseException) -> bool:
@@ -220,7 +221,7 @@ class GroqChat:
             if len(msgs[i]["content"]) > MAX_TOOL_CHARS:
                 msgs[i]["content"] = msgs[i]["content"][:MAX_TOOL_CHARS] + "\n…(tronqué)"
         total = sum(len(m.get("content") or "") for m in msgs)
-        for i in tool_idx[:-2]:
+        for i in tool_idx[:-1]:  # le dernier résultat reste toujours complet
             if total <= MAX_TOTAL_CHARS:
                 break
             old = len(msgs[i]["content"])
@@ -233,8 +234,14 @@ class GroqChat:
     def _post(self, model: str) -> dict:
         # max_completion_tokens explicite : sans lui, qwen s'arrêtait vers 300 jetons au milieu d'un
         # write_file (users.py tronqué, T002 v2 itération 2, 25/11/2026).
-        body = {"model": model, "messages": self._compacted(), "temperature": 0.2,
-                "max_completion_tokens": MAX_COMPLETION_TOKENS}
+        # Groq compte la longueur de sortie DEMANDÉE dans le quota par minute : entrée + max_completion_tokens
+        # doit rester sous ~8 000 jetons, sinon HTTP 413 (vu le 25/11/2026 avec 4 096 fixe). On l'ajuste donc
+        # à la taille réelle de l'historique envoyé (≈ 3,5 caractères par jeton, outils compris).
+        msgs = self._compacted()
+        est_in = (sum(len(m.get("content") or "") + len(json.dumps(m.get("tool_calls") or "")) for m in msgs)
+                  + len(json.dumps(self.tools))) / 3.5
+        budget = int(min(MAX_COMPLETION_TOKENS, max(1_024, TPM_LIMIT - est_in - 300)))
+        body = {"model": model, "messages": msgs, "temperature": 0.2, "max_completion_tokens": budget}
         if self.tools:
             body |= {"tools": self.tools, "tool_choice": "auto"}
         r = self.http.post(self.URL, json=body)
