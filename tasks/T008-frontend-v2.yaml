@@ -1,0 +1,54 @@
+# Refonte visuelle du frontend Django — demandée par le Project Owner le 26/11/2026 (« trop basique »).
+id: T008
+title: Frontend v2 (interface type plateforme de streaming)
+role: frontend_developer
+prompt_template: prompts/frontend_developer.v1.md
+review: true
+test_command: [docker, compose, --profile, tests, run, --rm, tests, sh, -c, "python -m compileall -q streaming frontend tests && python -c 'import frontend.views' && pytest -v -p no:cacheprovider tests/"]
+test_timeout: 1800
+write_allow:
+  - frontend/
+  - tests/
+description: |
+  Le frontend Django actuel (T006) fonctionne mais il est trop basique. Refais l'interface, SANS changer
+  api_client.py, urls.py ni le comportement testé (codes 404 / 503, messages « Avis enregistré » et
+  « Note invalide », jeton CSRF). Lis d'abord frontend/views.py, frontend/settings.py et
+  frontend/templates/frontend/title.html, puis écris. Ne lis pas les autres fichiers.
+  Nom affiché du site : « CassaStream » (n'utilise aucun nom ni logo de marque existante).
+
+  1. `frontend/static/frontend/style.css` (un seul fichier CSS, pas de CDN ni de JavaScript externe) :
+     thème sombre, en-tête fixe, cartes « affiche » au format portrait 2:3 avec dégradé de couleur, rangées
+     horizontales défilantes (overflow-x: auto, scroll-snap), effet au survol, grille responsive
+     (mobile → 2 colonnes), badges, étoiles. Charge-le dans base.html avec {% load static %}.
+  2. `frontend/templatetags/__init__.py` et `frontend/templatetags/cassastream.py`, filtres :
+     `hue` (texte → entier 0..359 stable, via hashlib.md5) pour la couleur de l'affiche ;
+     `stars` (note moyenne ou None → chaîne de 5 caractères « ★ » / « ☆ », arrondi à l'entier ; None → « ☆☆☆☆☆ ») ;
+     `duree` (secondes → « 1 h 30 min », « 45 min ») ; `local_dt` (chaîne ISO de l'API en UTC, sans fuseau →
+     « 26/11/2026 09:42 » à l'heure de settings.TIME_ZONE ; chaîne invalide → renvoyée telle quelle).
+  3. settings.py : TIME_ZONE = "Africa/Tunis" ; FEATURED_GENRES = ["science-fiction", "action", "drame",
+     "comedie", "animation", "thriller", "fantastique", "horreur"] ; garde tout le reste.
+  4. views.py : `home` ajoute `rows` = liste de {"genre": g, "titles": genre_titles(g)} pour chaque genre de
+     FEATURED_GENRES (les genres vides sont omis ; une erreur httpx.HTTPStatusError sur un genre l'omet aussi),
+     et `hero` = premier élément du Top 10 (ou None). Passe FEATURED_GENRES au contexte (menu des genres).
+     Ne modifie pas les autres vues sauf pour passer FEATURED_GENRES au contexte.
+  5. Gabarits : base.html (en-tête : logo CassaStream, menu des genres, champ « identifiant spectateur » vers
+     l'historique ; pied de page : état du cluster si disponible) ; home.html (bannière « N° 1 aujourd'hui »
+     avec titre, genres, résumé, bouton « Voir la fiche » ; rangée « Top 10 du jour » avec le rang en grand
+     chiffre à côté de chaque affiche et le nombre de vues ; puis une rangée par genre) ; genre.html (grille
+     d'affiches) ; title.html (grande bannière dégradée, badges film/série et année, genres, étoiles + note
+     sur 5 + nombre d'avis, vues, résumé, épisodes si présent ; formulaire d'avis avec note 1..5 en boutons
+     radio et commentaire) ; history.html (tableau : titre lié à sa fiche, date avec local_dt, durée avec duree,
+     badge « Terminé » / « En cours ») ; error.html dans le même style. Texte en français, accessible
+     (label pour chaque champ, attribut alt/aria-label si besoin).
+  6. tests/test_frontend.py : garde TOUS les tests existants (adapte seulement les données factices si une vue
+     utilise de nouvelles fonctions : monkeypatch genre_titles sur l'accueil) et ajoute des tests des 4 filtres
+     (hue stable et dans 0..359, stars(4.4) == "★★★★☆", stars(None), duree(5400) == "1 h 30 min",
+     duree(2700) == "45 min", local_dt("2026-11-26T07:42:58.245000") == "26/11/2026 08:42") et un test que
+     l'accueil affiche une rangée de genre.
+  Bibliothèques autorisées : django, httpx, pytest, bibliothèque standard (hashlib, zoneinfo, datetime).
+acceptance:
+  - api_client.py et urls.py inchangés ; tous les anciens tests gardés et verts
+  - un fichier CSS local, aucune ressource externe (pas de CDN, pas d'image distante)
+  - 4 filtres de gabarit testés (hue, stars, duree, local_dt)
+  - accueil : bannière N° 1, rangée Top 10, rangées par genre
+  - heure affichée en Africa/Tunis
