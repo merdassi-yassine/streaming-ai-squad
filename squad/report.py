@@ -42,6 +42,7 @@ def summarize_run(run_dir: Path) -> dict:
     written = sorted({f for r in recs if r["kind"] == "agent_result" for f in r.get("files_written", [])})
     iterations = max([r.get("iteration", 0) for r in recs if r["kind"] == "agent_result"] or [0])
     interrupted = (run_dir / "INTERRUPTED.txt").exists()
+    cancelled = (run_dir / "CANCELLED.txt").exists()
     return {
         "run_id": run_dir.name, "task": task, "iterations": iterations, "prompts": prompts,
         "llm_calls": len(calls), "models": dict(models), "errors": dict(errors),
@@ -49,7 +50,8 @@ def summarize_run(run_dir: Path) -> dict:
         "tests": [(t["iteration"], t["exit_code"], _last_summary(t.get("tail", ""))) for t in tests],
         "reviews": [(r["iteration"], _recommendation(r.get("review", ""))) for r in reviews],
         "decisions": [(d["iteration"], d["decision"], d.get("feedback", ""), d.get("decided_by", "")) for d in decisions],
-        "result": results[-1]["result"] if results else ("interrompu" if interrupted else "en attente de décision"),
+        "result": results[-1]["result"] if results else ("annulé" if cancelled else "interrompu" if interrupted
+                                                          else "en attente de décision"),
     }
 
 
