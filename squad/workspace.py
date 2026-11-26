@@ -76,7 +76,13 @@ class Workspace:
         return out[:500]
 
     def read_file(self, path: str) -> str:
-        full = self.root / self._rel(path)
+        rel = self._rel(path)
+        self.reads[rel] = self.reads.get(rel, 0) + 1
+        if self.reads[rel] > MAX_READS_PER_FILE:
+            # Garde-fou anti-boucle (T004, 26/11/2026 : 18 relectures des mêmes fichiers, aucun fichier écrit).
+            raise Refused(f"'{rel}' a déjà été lu {MAX_READS_PER_FILE} fois : ne le relis plus, "
+                          "écris maintenant tes fichiers avec write_file")
+        full = self.root / rel
         if not full.is_file():
             raise Refused(f"fichier introuvable : '{path}'")
         if full.stat().st_size > MAX_BYTES:
