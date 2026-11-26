@@ -10,7 +10,7 @@ from rich.console import Console
 
 console = Console()
 
-AGENT_COLORS = {"orchestrator": "cyan", "backend_developer": "green", "reviewer": "yellow", "human": "magenta"}
+AGENT_COLORS = {"orchestrator": "cyan", "backend_developer": "green", "frontend_developer": "blue", "reviewer": "yellow", "human": "magenta"}
 
 
 def now() -> str:
