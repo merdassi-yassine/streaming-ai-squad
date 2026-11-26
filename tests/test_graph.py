@@ -149,3 +149,12 @@ def test_changed_paths_premiere_ligne_modifiee(repo):
     (repo / "hello" / "b.py").write_text("nouveau\n")  # non suivi (« ?? »)
     (repo / "autre.txt").write_text("hors dossier\n")
     assert sorted(gitops.changed_paths(repo, ["hello/"])) == ["hello/a.py", "hello/b.py"]
+
+
+def test_decision_deleguee_tracee_au_nom_du_delegue(repo):
+    g, cfg = make_graph(), {"configurable": {"thread_id": "r5"}}
+    g.invoke({"run_id": "T000-r5", "target": str(repo), "task": task()}, cfg)
+    g.invoke(Command(resume={"decision": "approve", "by": "Claude (délégation du PO)"}), cfg)
+    dec = [json.loads(p.read_text(encoding="utf-8")) for p in (repo / "ai-trace/runs/T000-r5").glob("*decision.json")]
+    assert dec[0]["decided_by"] == "Claude (délégation du PO)"
+    assert "par Claude (d" in git(repo, "log", "-2", "--format=%s")  # git() du test décode en cp1252 : on teste la partie ASCII

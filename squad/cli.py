@@ -74,6 +74,7 @@ def main(argv=None) -> int:
     s = sub.add_parser("show"); s.add_argument("run_id")
     d = sub.add_parser("decide"); d.add_argument("run_id"); d.add_argument("decision", choices=["approve", "changes", "reject"])
     d.add_argument("--feedback", default="")
+    d.add_argument("--by", default="", help="auteur réel de la décision s'il n'est pas le Project Owner (délégation)")
     rs = sub.add_parser("resume"); rs.add_argument("run_id")
     rp = sub.add_parser("report"); rp.add_argument("--target", required=True)
     rp.add_argument("--out", default="", help="fichier Markdown (défaut : <cible>/docs/rapport-tracabilite.md)")
@@ -125,7 +126,7 @@ def main(argv=None) -> int:
             if a.decision == "changes" and not a.feedback:
                 console.print("[red]--feedback est obligatoire avec 'changes'[/red]")
                 return 1
-            result = graph.invoke(Command(resume={"decision": a.decision, "feedback": a.feedback}), cfg)
+            result = graph.invoke(Command(resume={"decision": a.decision, "feedback": a.feedback, "by": a.by}), cfg)
         show_pending(result)
         report_end(result)
     return 0

@@ -43,6 +43,7 @@ class SquadState(TypedDict, total=False):
     result: str
     tests: dict | None
     review: str
+    decided_by: str
 
 
 def human_name() -> str:
@@ -170,15 +171,20 @@ def build_graph(chat_factory: Callable, checkpointer, quiet: bool = False):
         decision = answer.get("decision")
         if decision not in DECISIONS:
             raise ValueError(f"décision invalide : {decision!r} (attendu : {sorted(DECISIONS)})")
+        # « by » : décision prise par un délégué (ex. Claude quand le Project Owner est indisponible). On
+        # l'enregistre tel quel pour que la trace dise la vérité sur QUI a décidé.
+        by = answer.get("by") or human_name()
         t.record("decision", "human", {"iteration": it, "decision": decision,
-                                        "feedback": answer.get("feedback", ""), "decided_by": human_name()})
-        t.event("human", f"décision : {decision}" + (f" — « {answer.get('feedback')} »" if answer.get("feedback") else ""))
-        return {"decision": decision, "feedback": answer.get("feedback", "")}
+                                        "feedback": answer.get("feedback", ""), "decided_by": by})
+        t.event("human", f"décision : {decision} par {by}"
+                + (f" — « {answer.get('feedback')} »" if answer.get("feedback") else ""))
+        return {"decision": decision, "feedback": answer.get("feedback", ""), "decided_by": by}
 
     def merge(s: SquadState) -> dict:
         t = tracer(s)
+        by = s.get("decided_by") or human_name()
         sha = gitops.merge(s["target"], s["branch"],
-                           f"Merge {s['branch']} : {s['task']['id']} approuvé par {human_name()}\n\nRun-Id: {s['run_id']}")
+                           f"Merge {s['branch']} : {s['task']['id']} approuvé par {by}\n\nRun-Id: {s['run_id']}")
         t.event("orchestrator", f"fusion dans main ({sha})")
         t.record("result", "orchestrator", {"result": "merged", "merge_commit": sha})
         gitops.commit_paths(s["target"], [f"ai-trace/runs/{s['run_id']}"], f"Trace {s['run_id']} ({s['task']['id']}, approuvé)")
