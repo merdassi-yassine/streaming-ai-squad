@@ -16,9 +16,13 @@ DEFAULT_GEMINI_MODELS = "gemini-3.5-flash-lite,gemini-3.5-flash,gemini-3.8-flash
 DEFAULT_GROQ_MODELS = "openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b"
 # DeepSeek (payant) : modèles listés par GET /models le 26/11/2026.
 DEFAULT_DEEPSEEK_MODELS = "deepseek-flash,deepseek-v4-pro"
+# OpenRouter (offre gratuite, 50 requêtes/jour) : modèles « :free » avec appel d'outils, listés le 26/11/2026.
+DEFAULT_OPENROUTER_MODELS = ("nvidia/nemotron-3-ultra-550b-a55b:free,google/gemma-4-31b-it:free,"
+                             "nvidia/nemotron-3.5-super-vl:free")
 PROVIDERS = {"gemini": ("GEMINI_MODELS", DEFAULT_GEMINI_MODELS, "GEMINI_API_KEY"),
              "groq": ("GROQ_MODELS", DEFAULT_GROQ_MODELS, "GROQ_API_KEY"),
-             "deepseek": ("DEEPSEEK_MODELS", DEFAULT_DEEPSEEK_MODELS, "DEEPSEEK_API_KEY")}
+             "deepseek": ("DEEPSEEK_MODELS", DEFAULT_DEEPSEEK_MODELS, "DEEPSEEK_API_KEY"),
+             "openrouter": ("OPENROUTER_MODELS", DEFAULT_OPENROUTER_MODELS, "OPENROUTER_API_KEY")}
 
 
 @dataclass(frozen=True)

@@ -326,6 +326,13 @@ class DeepSeekChat(GroqChat):
         return {"model": model, "messages": msgs, "temperature": 0.2, "max_tokens": 8_192}
 
 
+class OpenRouterChat(DeepSeekChat):
+    """OpenRouter (API compatible OpenAI) : modèles « :free », 50 requêtes gratuites par jour. Ajouté le 26/11/2026
+    quand Gemini et Groq étaient tous deux saturés. Contexte long : historique complet, comme DeepSeek."""
+    URL = "https://openrouter.ai/api/v1/chat/completions"
+    PROVIDER = "openrouter"
+
+
 def call_patiently(models: list[str], fn: Callable[[str], Any], tracer: Tracer, agent: str):
     """call_with_fallback + pauses croissantes si TOUS les modèles sont saturés (au lieu d'interrompre le run)."""
     errors_all: list[dict] = []
@@ -351,6 +358,8 @@ def make_chat(settings, system: str, tool_specs: list[dict], tracer: Tracer, age
         return GeminiChat(settings.api_key, settings.models, system, tool_specs, tracer, agent)
     if settings.provider == "groq":
         return GroqChat(settings.api_key, settings.models, system, tool_specs, tracer, agent)
+    if settings.provider == "openrouter":
+        return OpenRouterChat(settings.api_key, settings.models, system, tool_specs, tracer, agent)
     if settings.provider == "deepseek":
         return DeepSeekChat(settings.api_key, settings.models, system, tool_specs, tracer, agent)
     raise NotImplementedError(settings.provider)

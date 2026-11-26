@@ -173,3 +173,12 @@ def test_provider_per_role(monkeypatch):
     monkeypatch.setenv("REVIEWER_PROVIDER", "deepseek")
     assert get_settings("reviewer").provider == "deepseek"
     assert get_settings("backend_developer").provider == "groq"
+
+
+def test_openrouter_url_et_fournisseur(tmp_path):
+    from squad.llm import OpenRouterChat
+    http = FakeHttp([ok({"content": "ok"})])
+    chat = OpenRouterChat("k", ["m:free"], "s", SPECS, Tracer(tmp_path, "r", quiet=True), "reviewer", http=http)
+    assert chat.send_user("x").text == "ok"
+    assert OpenRouterChat.URL == "https://openrouter.ai/api/v1/chat/completions"
+    assert http.bodies[0]["max_tokens"] == 8192
