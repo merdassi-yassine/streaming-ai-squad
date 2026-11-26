@@ -47,3 +47,13 @@ def test_contenu_trop_gros_refuse(ws):
 def test_outil_inconnu_et_argument_manquant(ws):
     assert ws.execute("rm_rf", {})["ok"] is False
     assert "manquant" in ws.execute("write_file", {"path": "hello/a.py"})["error"]
+
+
+def test_relectures_limitees(tmp_path):
+    from squad.workspace import MAX_READS_PER_FILE, Workspace
+    (tmp_path / "a.py").write_text("x")
+    ws = Workspace(tmp_path, ["a/"])
+    for _ in range(MAX_READS_PER_FILE):
+        assert ws.execute("read_file", {"path": "a.py"})["ok"]
+    r = ws.execute("read_file", {"path": "a.py"})
+    assert r.get("refused") and "écris maintenant" in r["error"]

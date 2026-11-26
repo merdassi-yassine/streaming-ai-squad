@@ -12,8 +12,27 @@ write_allow:
   - streaming/
   - tests/
 description: |
-  Lis d'abord streaming/models.py, streaming/dao/__init__.py et les signatures des classes DAO
-  (streaming/dao/*.py). Écris des fichiers COURTS (moins de 120 lignes), un write_file par fichier, contenu complet.
+  NE LIS PAS les fichiers de streaming/dao/ ni streaming/models.py : leurs signatures exactes sont ci-dessous
+  (extraites automatiquement du code fusionné). Tu peux lire tests/conftest.py si besoin.
+  Écris des fichiers COURTS (moins de 120 lignes), un write_file par fichier, contenu complet.
+
+  Imports disponibles :
+    from streaming.models import Title, User
+    from streaming.dao import TitleDAO, UserDAO, RatingDAO, ViewDAO, StatsDAO
+    from streaming.schema import create_schema, drop_schema
+  Signatures :
+    @dataclass Title(title_id: uuid.UUID, title: str, kind: str, release_year: int, genres: Set[str],
+                     synopsis: Optional[str], duration_minutes: Optional[int], episodes_count: Optional[int])
+    @dataclass User(user_id: uuid.UUID, email: str, username: str, created_at: datetime.datetime)
+    TitleDAO(session, keyspace) : save(title: Title) ; get(title_id) -> Optional[Title] ;
+                                  list_by_genre(genre: str, limit=20) -> List[dict]
+    UserDAO(session, keyspace) : save(user: User) ; get(user_id) -> Optional[User]
+    RatingDAO(session, keyspace) : add(user_id, title_id, rating: int, comment=None, username=None, title=None)
+                                   (ValueError si note hors 1..5) ; list_for_title(title_id, limit=20) -> List[Dict] ;
+                                   list_for_user(user_id, limit=20) -> List[Dict]
+    ViewDAO(session, keyspace) : record_view(user_id, title_id, viewed_at: datetime) ;
+                                 history(user_id, limit=20) -> List[Dict] ; views_of_day(day: date) -> Dict[uuid.UUID, int]
+    StatsDAO(session, keyspace) : get(title_id) -> Tuple[int, int, int]  # (vues, somme_notes, nb_notes)
 
   1) `streaming/services.py` — utilise UNIQUEMENT les classes de streaming.dao (aucune requête CQL ici) :
      - `CatalogService(titles, stats)` : `title_details(title_id)` → dict avec la fiche + `average_rating`

@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 SKIP_DIRS = {".git", ".venv", "__pycache__", ".pytest_cache", "ai-trace"}
 FORBIDDEN_PARTS = {".git", ".env"}
 MAX_BYTES = 100_000
+MAX_READS_PER_FILE = 2  # au-delà, read_file refuse : évite les boucles de relecture
 
 
 class Refused(Exception):
@@ -52,6 +53,7 @@ class Workspace:
         self.root = Path(root).resolve()
         self.write_allow = [a.strip("/") + "/" for a in write_allow]
         self.written: list[str] = []
+        self.reads: dict[str, int] = {}
 
     def _rel(self, path: str) -> str:
         if not path or Path(path).is_absolute() or PurePosixPath(path).is_absolute():
