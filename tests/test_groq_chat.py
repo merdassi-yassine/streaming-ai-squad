@@ -124,3 +124,20 @@ def test_rapport_resume_un_run(tmp_path):
     md = build_report(tmp_path)
     assert "| `T9-1` | T9 Essai | 1 | ✓ 3 passed in 1.0s | APPROUVER | **merged** |" in md
     assert "429 ×1" in md and "**approve** (PO)" in md
+
+
+def test_fichiers_deja_ecrits_resumes_dans_l_historique(tmp_path):
+    big = "ligne\n" * 300
+    write = lambda i: ok({"content": None, "tool_calls": [{"id": f"w{i}", "type": "function", "function": {
+        "name": "write_file", "arguments": json.dumps({"path": f"f{i}.py", "content": big})}}]})
+    http = FakeHttp([write(0), write(1), ok({"content": "fin"})])
+    chat = GroqChat("k", ["m"], "s", SPECS, Tracer(tmp_path, "r", quiet=True), "a", http=http)
+    chat.send_user("x")
+    chat.send_tool_results([("write_file", {"ok": True})])
+    chat.send_tool_results([("write_file", {"ok": True})])
+    sent = [m for m in http.bodies[-1]["messages"] if m["role"] == "assistant"]
+    first = json.loads(sent[0]["tool_calls"][0]["function"]["arguments"])
+    assert "300 lignes" in first["content"] and first["path"] == "f0.py"
+    last = json.loads(sent[-1]["tool_calls"][0]["function"]["arguments"])
+    assert last["content"] == big  # le dernier appel reste intact
+    assert big in json.dumps(chat.transcript())  # la trace garde tout

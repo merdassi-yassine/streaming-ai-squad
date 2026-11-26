@@ -202,6 +202,23 @@ class GroqChat:
         pas modifié : seule la copie envoyée est réduite.
         """
         msgs = [dict(m) for m in self.messages]
+        # 0) Les fichiers que l'agent a DÉJÀ écrits sont renvoyés en entier dans ses propres appels write_file :
+        #    on ne garde qu'un résumé (T004, 26/11/2026 : 6 000 jetons d'entrée → réponse coupée à 1 024 jetons).
+        assistant_idx = [i for i, m in enumerate(msgs) if m["role"] == "assistant" and m.get("tool_calls")]
+        for i in assistant_idx[:-1]:
+            calls = []
+            for c in msgs[i]["tool_calls"]:
+                fn = c.get("function", {})
+                if fn.get("name") == "write_file":
+                    try:
+                        a = json.loads(fn.get("arguments") or "{}")
+                        n = len(str(a.get("content", "")).splitlines())
+                        a["content"] = f"(contenu complet déjà écrit dans le fichier : {n} lignes)"
+                        c = {**c, "function": {**fn, "arguments": json.dumps(a, ensure_ascii=False)}}
+                    except (json.JSONDecodeError, AttributeError):
+                        pass
+                calls.append(c)
+            msgs[i] = {**msgs[i], "tool_calls": calls}
         tool_idx = [i for i, m in enumerate(msgs) if m["role"] == "tool"]
         # 1) Une lecture déjà refaite plus loin est inutile : seule la DERNIÈRE lecture d'un même fichier
         #    (ou du même list_files) est gardée. Masquer toutes les anciennes lectures faisait relire les
