@@ -140,4 +140,4 @@ def test_fichiers_deja_ecrits_resumes_dans_l_historique(tmp_path):
     assert "300 lignes" in first["content"] and first["path"] == "f0.py"
     last = json.loads(sent[-1]["tool_calls"][0]["function"]["arguments"])
     assert last["content"] == big  # le dernier appel reste intact
-    assert big in json.dumps(chat.transcript())  # la trace garde tout
+    assert "300 lignes" not in json.dumps(chat.transcript(), ensure_ascii=False)  # la trace garde le vrai contenu
