@@ -15,7 +15,7 @@ from .tracing import Tracer
 
 REQUEST_TIMEOUT_MS = 90_000  # une requête bloquée plus de 90 s est abandonnée puis relancée
 RETRYABLE = {429, 500, 502, 503, 504, "timeout", "tool_use_failed"}
-FATAL = {401, 403}  # problème de clé : inutile d'essayer un autre modèle
+FATAL = {401, 402, 403}  # clé invalide ou solde épuisé (402, DeepSeek) : inutile d'essayer un autre modèle
 # Offre gratuite saturée (503 sur tous les modèles, vu le 24/11/2026) : au lieu d'abandonner le run,
 # on fait une pause croissante (2, 4, 6, 8 min) avant une nouvelle série d'essais.
 PATIENCE_ROUNDS = 5
@@ -173,6 +173,7 @@ class GroqChat:
     Même interface que GeminiChat (send_user / send_tool_results / transcript) : le reste du moteur ne change pas.
     """
     URL = "https://api.groq.com/openai/v1/chat/completions"
+    PROVIDER = "groq"
 
     def __init__(self, api_key: str, models: list[str], system: str, tool_specs: list[dict],
                  tracer: Tracer, agent: str, http=None):
@@ -258,7 +259,7 @@ class GroqChat:
         est_in = (sum(len(m.get("content") or "") + len(json.dumps(m.get("tool_calls") or "")) for m in msgs)
                   + len(json.dumps(self.tools))) / 3.5
         budget = int(min(MAX_COMPLETION_TOKENS, max(1_024, TPM_LIMIT - est_in - 300)))
-        body = {"model": model, "messages": msgs, "temperature": 0.2, "max_completion_tokens": budget}
+        body = self._body(model, msgs, budget)
         if self.tools:
             body |= {"tools": self.tools, "tool_choice": "auto"}
         r = self.http.post(self.URL, json=body)
@@ -269,6 +270,9 @@ class GroqChat:
         if r.status_code != 200:
             raise HttpStatusError(r.status_code, r.text)
         return r.json()
+
+    def _body(self, model: str, msgs: list[dict], budget: int) -> dict:
+        return {"model": model, "messages": msgs, "temperature": 0.2, "max_completion_tokens": budget}
 
     def _generate(self, *new: dict) -> Turn:
         self.messages.extend(new)
@@ -289,7 +293,7 @@ class GroqChat:
                 self._call_keys[c["id"]] = f"{name}({args.get('path') or args.get('directory') or '.'})"
         usage = resp.get("usage") or {}
         self.tracer.record("llm_call", self.agent, {
-            "provider": "groq",
+            "provider": self.PROVIDER,
             "models_requested": self.models,
             "model_used": model,
             "errors_before_success": errors,
@@ -299,11 +303,27 @@ class GroqChat:
             "response_raw": resp,
             "usage": {"input_tokens": usage.get("prompt_tokens"), "output_tokens": usage.get("completion_tokens")},
         })
-        self.tracer.event(self.agent, f"réponse de groq:{model} ({time.time() - start:.0f} s)")
+        self.tracer.event(self.agent, f"réponse de {self.PROVIDER}:{model} ({time.time() - start:.0f} s)")
         return Turn(text=msg.get("content") or "", tool_calls=calls, model=model)
 
     def transcript(self) -> list[dict]:
         return self.messages
+
+
+class DeepSeekChat(GroqChat):
+    """DeepSeek (API compatible OpenAI, payante : pas d'offre gratuite). Ajouté le 26/11/2026.
+
+    Contexte d'un million de jetons et pas de quota par minute comme Groq : l'historique est envoyé
+    complet (pas de compactage) et la longueur de sortie n'a pas à être ajustée.
+    """
+    URL = "https://api.deepseek.com/chat/completions"
+    PROVIDER = "deepseek"
+
+    def _compacted(self) -> list[dict]:
+        return [dict(m) for m in self.messages]
+
+    def _body(self, model: str, msgs: list[dict], budget: int) -> dict:
+        return {"model": model, "messages": msgs, "temperature": 0.2, "max_tokens": 8_192}
 
 
 def call_patiently(models: list[str], fn: Callable[[str], Any], tracer: Tracer, agent: str):
@@ -331,4 +351,6 @@ def make_chat(settings, system: str, tool_specs: list[dict], tracer: Tracer, age
         return GeminiChat(settings.api_key, settings.models, system, tool_specs, tracer, agent)
     if settings.provider == "groq":
         return GroqChat(settings.api_key, settings.models, system, tool_specs, tracer, agent)
+    if settings.provider == "deepseek":
+        return DeepSeekChat(settings.api_key, settings.models, system, tool_specs, tracer, agent)
     raise NotImplementedError(settings.provider)

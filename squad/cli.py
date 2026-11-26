@@ -26,8 +26,8 @@ console = Console()
 
 
 def chat_factory():
-    settings = get_settings()
-    return lambda system, tools, tracer, agent: make_chat(settings, system, tools, tracer, agent)
+    get_settings()  # échoue tout de suite si la clé du fournisseur global manque
+    return lambda system, tools, tracer, agent: make_chat(get_settings(agent), system, tools, tracer, agent)
 
 
 def show_pending(result_or_state, with_diff: bool = True) -> None:

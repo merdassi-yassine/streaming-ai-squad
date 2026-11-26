@@ -14,6 +14,11 @@ DEFAULT_GEMINI_MODELS = "gemini-3.5-flash-lite,gemini-3.5-flash,gemini-3.8-flash
 # Groq (offre gratuite, sans carte) : appel d'outils vérifié le 24/11/2026 sur ces deux modèles (< 1 s).
 # qwen en dernier : il tronquait ses fichiers (25/11/2026).
 DEFAULT_GROQ_MODELS = "openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b"
+# DeepSeek (payant) : modèles listés par GET /models le 26/11/2026.
+DEFAULT_DEEPSEEK_MODELS = "deepseek-flash,deepseek-v4-pro"
+PROVIDERS = {"gemini": ("GEMINI_MODELS", DEFAULT_GEMINI_MODELS, "GEMINI_API_KEY"),
+             "groq": ("GROQ_MODELS", DEFAULT_GROQ_MODELS, "GROQ_API_KEY"),
+             "deepseek": ("DEEPSEEK_MODELS", DEFAULT_DEEPSEEK_MODELS, "DEEPSEEK_API_KEY")}
 
 
 @dataclass(frozen=True)
@@ -23,17 +28,18 @@ class Settings:
     api_key: str
 
 
-def get_settings() -> Settings:
+def get_settings(agent: str | None = None) -> Settings:
+    """Fournisseur global LLM_PROVIDER, surchargeable par rôle : REVIEWER_PROVIDER=deepseek,
+    FRONTEND_DEVELOPER_PROVIDER=gemini… (un modèle différent par agent = relecture plus indépendante)."""
     load_dotenv(SQUAD_ROOT / ".env")
     provider = os.getenv("LLM_PROVIDER", "gemini")
-    if provider == "gemini":
-        models = os.getenv("GEMINI_MODELS", DEFAULT_GEMINI_MODELS).split(",")
-        key = os.getenv("GEMINI_API_KEY", "")
-    elif provider == "groq":
-        models = os.getenv("GROQ_MODELS", DEFAULT_GROQ_MODELS).split(",")
-        key = os.getenv("GROQ_API_KEY", "")
-    else:
-        raise NotImplementedError(f"Fournisseur '{provider}' pas encore pris en charge (prévu plus tard).")
+    if agent:
+        provider = os.getenv(f"{agent.upper()}_PROVIDER", provider)
+    if provider not in PROVIDERS:
+        raise NotImplementedError(f"Fournisseur '{provider}' pas encore pris en charge.")
+    models_var, default_models, key_var = PROVIDERS[provider]
+    models = os.getenv(models_var, default_models).split(",")
+    key = os.getenv(key_var, "")
     if not key or key == "colle-ta-cle-ici":
-        raise RuntimeError("Clé API absente : renseigne-la dans le fichier .env")
+        raise RuntimeError(f"Clé API absente : renseigne {key_var} dans le fichier .env")
     return Settings(provider=provider, models=[m.strip() for m in models if m.strip()], api_key=key)

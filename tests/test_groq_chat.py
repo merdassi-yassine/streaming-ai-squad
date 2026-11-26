@@ -141,3 +141,35 @@ def test_fichiers_deja_ecrits_resumes_dans_l_historique(tmp_path):
     last = json.loads(sent[-1]["tool_calls"][0]["function"]["arguments"])
     assert last["content"] == big  # le dernier appel reste intact
     assert "300 lignes" not in json.dumps(chat.transcript(), ensure_ascii=False)  # la trace garde le vrai contenu
+
+
+def test_deepseek_historique_complet_et_max_tokens(tmp_path):
+    from squad.llm import DeepSeekChat
+    http = FakeHttp([ok({"content": "bonjour"})])
+    tracer = Tracer(tmp_path, "r", quiet=True)
+    chat = DeepSeekChat("k", ["deepseek-flash"], "s", SPECS, tracer, "reviewer", http=http)
+    assert chat.send_user("salut").text == "bonjour"
+    body = http.bodies[0]
+    assert DeepSeekChat.URL == "https://api.deepseek.com/chat/completions"
+    assert body["max_tokens"] == 8192 and "max_completion_tokens" not in body
+    rec = [json.loads(p.read_text(encoding="utf-8")) for p in tmp_path.rglob("*llm_call*.json")]
+    assert rec and rec[0]["provider"] == "deepseek"
+
+
+def test_solde_epuise_402_est_fatal(tmp_path):
+    from squad.llm import DeepSeekChat
+    http = FakeHttp([FakeResp(402, {"error": {"message": "Insufficient Balance"}})])
+    chat = DeepSeekChat("k", ["m1", "m2"], "s", SPECS, Tracer(tmp_path, "r", quiet=True), "a", http=http)
+    with pytest.raises(Exception, match="402"):
+        chat.send_user("x")
+    assert len(http.bodies) == 1  # pas de relance ni de modèle suivant
+
+
+def test_provider_per_role(monkeypatch):
+    from squad.config import get_settings
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "d")
+    monkeypatch.setenv("REVIEWER_PROVIDER", "deepseek")
+    assert get_settings("reviewer").provider == "deepseek"
+    assert get_settings("backend_developer").provider == "groq"
